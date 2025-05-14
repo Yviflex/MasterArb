@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Hexagones : force interne & convergence vers le centre (voisins)</title>
+
+    <!-- D3 v7 -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Vos données d’hexagones par canton -->
+    <script src="hexagons_by_kantons.js"></script>
+    <script src="canton_links.js"></script>
+
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        svg {
+            display: block;
+            background: #f9f9f9;
+        }
+
+        .grid path {
+            fill: none;
+            stroke: #ddd;
+            stroke-width: 1;
+        }
+
+        .links line {
+            stroke: #999;
+            stroke-width: 1;
+        }
+
+        .nodes path {
+            fill: #1f77b4;
+            fill-opacity: 0.6;
+            stroke: #333;
+            stroke-width: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <svg width="1800" height="1000"></svg>
+    <script>
+        const svg = d3.select("svg"),
+            width = +svg.attr("width"),
+            height = +svg.attr("height");
+
+        // 1) Préparer les nœuds
+        const nodes = [];
+        for (const canton in hexes) {
+            hexes[canton].forEach(h => {
+                nodes.push({ id: nodes.length, canton, x0: h.x, y0: h.y, x: h.x, y: h.y });
+            });
+        }
+
+        // 2) Calcul du radius + grille
+        const pts = nodes.map(d => [d.x, d.y]),
+            qt = d3.quadtree().x(d => d[0]).y(d => d[1]).addAll(pts);
+        let minD = Infinity;
+        pts.forEach(p => {
+            qt.remove(p);
+            const q = qt.find(p[0], p[1]);
+            if (q) minD = Math.min(minD, Math.hypot(p[0] - q[0], p[1] - q[1]));
+            qt.add(p);
+        });
+        const radius = minD / Math.sqrt(3),
+            hSp = Math.sqrt(3) * radius,
+            vSp = 1.5 * radius,
+            hexLine = d3.line().curve(d3.curveLinearClosed);
+
+        // grille
+        const gridG = svg.append("g").attr("class", "grid");
+        for (let row = 0; row < Math.ceil((height + 2 * radius) / vSp); row++) {
+            const y = row * vSp, xOff = (row % 2) * (hSp / 2);
+            for (let col = 0; col < Math.ceil((width + 2 * radius) / hSp); col++) {
+                const x = col * hSp + xOff;
+                const pts6 = d3.range(6).map(i => {
+                    const a = Math.PI / 3 * i - Math.PI / 2;
+                    return [x + radius * Math.cos(a), y + radius * Math.sin(a)];
+                });
+                gridG.append("path").attr("d", hexLine(pts6));
+            }
+        }
+
+        // helpers snap
+        function pixelToAxial(x, y) {
+            return { q: (Math.sqrt(3) / 3 * x - y / 3) / radius, r: (2 / 3 * y) / radius };
+        }
+        function axialRound(q, r) {
+            let X = q, Z = r, Y = -X - Z;
+            let rx = Math.round(X), ry = Math.round(Y), rz = Math.round(Z);
+            const dx = Math.abs(rx - X), dy = Math.abs(ry - Y), dz = Math.abs(rz - Z);
+            if (dx > dy && dx > dz) rx = -ry - rz;
+            else if (dy > dz) ry = -rx - rz;
+            else rz = -rx - ry;
+            return { q: rx, r: rz };
+        }
+        function axialToPixel(q, r) {
+            return [radius * Math.sqrt(3) * (q + r / 2), radius * 1.5 * r];
+        }
+        function snapXY(x, y) {
+            const ar = pixelToAxial(x, y), rr = axialRound(ar.q, ar.r);
+            return axialToPixel(rr.q, rr.r);
+        }
+
+        // 3) Liens d'adjacence voisins
+        const grouped = d3.group(nodes, d => d.canton);
+        const links = [];
+        grouped.forEach((nds) => {
+            const index = new Map();
+            nds.forEach(d => {
+                const ar = axialRound(...Object.values(pixelToAxial(d.x0, d.y0)));
+                d.q = ar.q; d.r = ar.r;
+                index.set(`${d.q},${d.r}`, d);
+            });
+            const dirs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+            nds.forEach(d => {
+                dirs.forEach(([dq, dr]) => {
+                    const key = `${d.q + dq},${d.r + dr}`;
+                    if (index.has(key)) {
+                        const o = index.get(key);
+                        if (d.id < o.id) links.push({ source: d.id, target: o.id });
+                    }
+                });
+            });
+        });
+
+        // 4) Simulation
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(radius * 2).strength(1.1))
+            .force("collide", d3.forceCollide(radius * 1))
+            .force("charge", d3.forceManyBody().strength(10))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .on("tick", ticked);
+
+        // 5) Création des SVG
+        const linkSel = svg.append("g").attr("class", "links")
+            .selectAll("line").data(links).enter().append("line");
+
+        const nodeSel = svg.append("g").attr("class", "nodes")
+            .selectAll("path").data(nodes).enter().append("path")
+            .call(d3.drag()
+                .on("start", dragStarted)
+                .on("drag", dragged)
+                .on("end", dragEnded)
+            );
+
+        // 6) tick handler
+        // --- 1) Ticked sans snap ---
+        function ticked() {
+            linkSel
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            nodeSel.attr("d", d => {
+                // On dessine l’hexagone centré sur (d.x,d.y) sans forcer sur la grille
+                const pts6 = d3.range(6).map(i => {
+                    const a = Math.PI / 3 * i - Math.PI / 2;
+                    return [d.x + radius * Math.cos(a), d.y + radius * Math.sin(a)];
+                });
+                return hexLine(pts6);
+            });
+        }
+
+        // --- 2) Snap final au "end" ---
+        simulation
+            .on("tick", ticked)
+            .on("end", snapped);  // on déclenche un dernier rendu
+
+        function snapped() {
+            // 1) Pour chaque canton...
+            grouped.forEach((nds) => {
+                // Construire la table d’adjacence interne au canton
+                const adj = new Map();
+                nds.forEach(d => adj.set(d.id, []));
+                links.forEach(l => {
+                    if (adj.has(l.source) && adj.has(l.target)) {
+                        adj.get(l.source).push(l.target);
+                        adj.get(l.target).push(l.source);
+                    }
+                });
+
+                const dirs = [
+                    [1, 0], [1, -1], [0, -1],
+                    [-1, 0], [-1, 1], [0, 1]
+                ];
+
+                const snappedAx = new Map();
+                const visited = new Set();
+
+                // On traite chaque composante (au cas où il y en a plusieurs)
+                nds.forEach(root => {
+                    if (visited.has(root.id)) return;
+
+                    // 2a) Ancrage du root : round sur sa position continue
+                    const ar0 = axialRound(...Object.values(pixelToAxial(root.x, root.y)));
+                    snappedAx.set(root.id, ar0);
+                    visited.add(root.id);
+
+                    // 2b) BFS pour propager aux voisins
+                    const queue = [root.id];
+                    while (queue.length) {
+                        const u = queue.shift();
+                        const du = nodes[u];
+                        const contU = pixelToAxial(du.x, du.y);
+
+                        adj.get(u).forEach(v => {
+                            if (visited.has(v)) return;
+                            const dv = nodes[v];
+                            const contV = pixelToAxial(dv.x, dv.y);
+
+                            // Choisir la direction axiale qui colle le mieux
+                            let best = null;
+                            dirs.forEach(([dq, dr]) => {
+                                const err = Math.hypot(
+                                    contU.q + dq - contV.q,
+                                    contU.r + dr - contV.r
+                                );
+                                if (!best || err < best.err) best = { dq, dr, err };
+                            });
+
+                            // On place v dans la cellule voisine correspondante
+                            const pu = snappedAx.get(u);
+                            snappedAx.set(v, { q: pu.q + best.dq, r: pu.r + best.dr });
+                            visited.add(v);
+                            queue.push(v);
+                        });
+                    }
+                });
+
+                // 3) Mise à jour des coordonnées pixels de tous les nœuds du canton
+                nds.forEach(d => {
+                    const { q, r } = snappedAx.get(d.id);
+                    const [nx, ny] = axialToPixel(q, r);
+                    d.x = nx; d.y = ny;
+                });
+            });
+
+            // 4) Transition finale
+            linkSel
+                .transition().duration(300)
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            nodeSel
+                .transition().duration(300)
+                .attr("d", d => {
+                    const pts6 = d3.range(6).map(i => {
+                        const a = Math.PI / 3 * i - Math.PI / 2;
+                        return [d.x + radius * Math.cos(a), d.y + radius * Math.sin(a)];
+                    });
+                    return hexLine(pts6);
+                });
+        }
+
+        // Il suffit ensuite de brancher :
+        simulation
+            .on("tick", ticked)
+            .on("end", snapped);
+
+
+
+        // 7) drag handlers
+        function dragStarted(e, d) {
+            if (!e.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+        }
+        function dragged(e, d) {
+            d.fx = e.x; d.fy = e.y;
+        }
+        function dragEnded(e, d) {
+            d.fx = d.fy = null;
+            simulation.alphaTarget(0);
+        }
+    </script>
+</body>
+
+</html>

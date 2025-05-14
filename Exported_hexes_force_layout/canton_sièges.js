@@ -1,0 +1,30 @@
+var sièges = {
+  nodes: [
+    { Kantonsnum: 1, nbr_SIEG_1: 36, Abr_Canton: "ZH" },
+    { Kantonsnum: 2, nbr_SIEG_1: 24, Abr_Canton: "BE" },
+    { Kantonsnum: 3, nbr_SIEG_1: 9, Abr_Canton: "LU" },
+    { Kantonsnum: 4, nbr_SIEG_1: 1, Abr_Canton: "UR" },
+    { Kantonsnum: 5, nbr_SIEG_1: 4, Abr_Canton: "SZ" },
+    { Kantonsnum: 6, nbr_SIEG_1: 1, Abr_Canton: "OW" },
+    { Kantonsnum: 7, nbr_SIEG_1: 1, Abr_Canton: "NW" },
+    { Kantonsnum: 8, nbr_SIEG_1: 1, Abr_Canton: "GL" },
+    { Kantonsnum: 9, nbr_SIEG_1: 3, Abr_Canton: "ZG" },
+    { Kantonsnum: 10, nbr_SIEG_1: 7, Abr_Canton: "FR" },
+    { Kantonsnum: 11, nbr_SIEG_1: 6, Abr_Canton: "SO" },
+    { Kantonsnum: 12, nbr_SIEG_1: 4, Abr_Canton: "BS" },
+    { Kantonsnum: 13, nbr_SIEG_1: 7, Abr_Canton: "BL" },
+    { Kantonsnum: 14, nbr_SIEG_1: 2, Abr_Canton: "SH" },
+    { Kantonsnum: 15, nbr_SIEG_1: 1, Abr_Canton: "AR" },
+    { Kantonsnum: 16, nbr_SIEG_1: 1, Abr_Canton: "AI" },
+    { Kantonsnum: 17, nbr_SIEG_1: 12, Abr_Canton: "SG" },
+    { Kantonsnum: 18, nbr_SIEG_1: 5, Abr_Canton: "GR" },
+    { Kantonsnum: 19, nbr_SIEG_1: 16, Abr_Canton: "AG" },
+    { Kantonsnum: 20, nbr_SIEG_1: 6, Abr_Canton: "TG" },
+    { Kantonsnum: 21, nbr_SIEG_1: 8, Abr_Canton: "TI" },
+    { Kantonsnum: 22, nbr_SIEG_1: 19, Abr_Canton: "VD" },
+    { Kantonsnum: 23, nbr_SIEG_1: 8, Abr_Canton: "VS" },
+    { Kantonsnum: 24, nbr_SIEG_1: 4, Abr_Canton: "NE" },
+    { Kantonsnum: 25, nbr_SIEG_1: 12, Abr_Canton: "GE" },
+    { Kantonsnum: 26, nbr_SIEG_1: 2, Abr_Canton: "JU" }
+  ]
+};
