@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Hexagones verrouillés sur grille</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="hexagons_by_kantons.js"></script>
+    <script src="canton_links.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        svg {
+            display: block;
+            background: #f9f9f9;
+        }
+
+        .grid path {
+            stroke: #ccc;
+            fill: none;
+        }
+
+        .nodes path {
+            fill-opacity: 0.6;
+            stroke: #333;
+            stroke-width: 1;
+        }
+
+        .link line {
+            stroke: #555;
+            stroke-width: 2;
+            stroke-dasharray: 4 2;
+        }
+
+        .centroids circle {
+            fill: red;
+            r: 4;
+        }
+    </style>
+</head>
+
+<body>
+    <button id="startBtn" style="position:absolute;z-index:10;top:10px;left:10px">
+        Lancer les déplacements
+    </button>
+    <button id="showPathBtn" style="position:absolute;z-index:10;top:50px;left:10px">
+        Voir les chemins
+    </button>
+    <svg width="1800" height="900"></svg>
+    <script>
+        const storedPaths = [];
+        const svgEl = d3.select("svg"),
+            width = +svgEl.attr("width"),
+            height = +svgEl.attr("height");
+
+        const nodes = [];
+        for (const canton in hexes) {
+            hexes[canton].forEach(c =>
+                nodes.push({ id: nodes.length, canton, x: c.x, y: c.y })
+            );
+        }
+
+        const grouped = d3.group(nodes, d => d.canton);
+
+        const radius = (() => {
+            const tree = d3.quadtree().x(d => d.x).y(d => d.y).addAll(nodes);
+            let minD = Infinity;
+            nodes.forEach(p => {
+                tree.remove(p);
+                const n = tree.find(p.x, p.y);
+                if (n) minD = Math.min(minD, Math.hypot(p.x - n.x, p.y - n.y));
+                tree.add(p);
+            });
+            return minD / Math.sqrt(3);
+        })();
+
+        const horiz = Math.sqrt(3) * radius;
+        const vert = 1.5 * radius;
+
+        function toHexGrid(x, y) {
+            const row = Math.round(y / vert);
+            const col = Math.round((x - (row % 2) * (horiz / 2)) / horiz);
+            return { col, row };
+        }
+
+        function fromHexGrid(col, row) {
+            const x = col * horiz + (row % 2) * (horiz / 2);
+            const y = row * vert;
+            return { x, y };
+        }
+
+        function offsetToAxial(col, row) {
+            const q = col - (row - (row & 1)) / 2;
+            const r = row;
+            return { q, r };
+        }
+
+        function axialToOffset(q, r) {
+            const col = q + (r - (r & 1)) / 2;
+            const row = r;
+            return { col, row };
+        }
+
+        nodes.forEach(d => {
+            const { col, row } = toHexGrid(d.x, d.y);
+            d.gridCol = col;
+            d.gridRow = row;
+            const { x, y } = fromHexGrid(col, row);
+            d.x = x;
+            d.y = y;
+        });
+
+        const centroids = new Map();
+        grouped.forEach((group, canton) => {
+            const cx = d3.mean(group, d => d.x);
+            const cy = d3.mean(group, d => d.y);
+            centroids.set(canton, { x: cx, y: cy });
+        });
+
+        const seen = new Set();
+        const linksData = cantonLinks.links.filter(l => {
+            const key = [l.source, l.target].sort().join(",");
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+
+        const linkPairs = linksData.map(l => ({
+            sourceCanton: String(l.source),
+            targetCanton: String(l.target),
+            source: centroids.get(String(l.source)),
+            target: centroids.get(String(l.target))
+        }));
+
+        const colorPalette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"];
+        const cantonColor = new Map();
+        const adjacency = new Map();
+
+        nodes.forEach(n => {
+            if (!adjacency.has(n.canton)) adjacency.set(n.canton, new Set());
+        });
+        linksData.forEach(({ source, target }) => {
+            adjacency.get(String(source)).add(String(target));
+            adjacency.get(String(target)).add(String(source));
+        });
+
+        const sortedCantons = Array.from(adjacency.keys()).sort();
+        for (const canton of sortedCantons) {
+            const used = new Set(
+                Array.from(adjacency.get(canton))
+                    .map(neighbor => cantonColor.get(neighbor))
+                    .filter(Boolean)
+            );
+            const available = colorPalette.find(c => !used.has(c)) || "#999";
+            cantonColor.set(canton, available);
+        }
+
+        const grid = svgEl.append("g").attr("class", "grid");
+        const highlightG = svgEl.append("g").attr("class", "link-path-highlight");
+
+        for (let row = -1; row < Math.ceil(height / vert) + 2; row++) {
+            const y = row * vert;
+            const offset = (row % 2) * (horiz / 2);
+            for (let col = -1; col < Math.ceil(width / horiz) + 2; col++) {
+                const x = col * horiz + offset;
+                if (x < -radius || x > width + radius || y < -radius || y > height + radius) continue;
+                const pts = d3.range(6).map(i => {
+                    const a = (Math.PI / 3) * i - Math.PI / 2;
+                    return [x + radius * Math.cos(a), y + radius * Math.sin(a)];
+                });
+                grid.append("path").attr("d", d3.line().curve(d3.curveLinearClosed)(pts));
+            }
+        }
+
+        const linkG = svgEl.append("g").attr("class", "link");
+        const nodeG = svgEl.append("g").attr("class", "nodes");
+        const hexPaths = nodeG.selectAll("path")
+            .data(nodes)
+            .enter().append("path")
+            .attr("d", d => {
+                const pts = d3.range(6).map(i => {
+                    const a = Math.PI / 3 * i - Math.PI / 2;
+                    return [d.x + radius * Math.cos(a), d.y + radius * Math.sin(a)];
+                });
+                return d3.line().curve(d3.curveLinearClosed)(pts);
+            })
+            .attr("fill", d => cantonColor.get(d.canton));
+
+        const linkLines = linkG.selectAll("line")
+            .data(linkPairs)
+            .enter().append("line")
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+        svgEl.append("g")
+            .attr("class", "centroids")
+            .selectAll("circle")
+            .data(Array.from(centroids.values()))
+            .enter()
+            .append("circle")
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y)
+            .attr("r", 4)
+            .attr("fill", "red");
+
+        function moveGroupTowards(groupFrom, groupTo, callback) {
+            const sGroup = grouped.get(groupFrom);
+            const tGroup = grouped.get(groupTo);
+            if (!sGroup || !tGroup) return;
+
+            let currentHex = (() => {
+                const target = centroids.get(groupTo);
+                let best = null;
+                let bestDist = Infinity;
+                for (const n of sGroup) {
+                    const { x, y } = fromHexGrid(n.gridCol, n.gridRow);
+                    const dist = Math.hypot(x - target.x, y - target.y);
+                    if (dist < bestDist) {
+                        best = { col: n.gridCol, row: n.gridRow };
+                        bestDist = dist;
+                    }
+                }
+                return best;
+            })();
+
+            function getHexesAlongSegment(x1, y1, x2, y2) {
+                const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / radius / 0.75);
+                const hexes = new Set();
+                for (let i = 0; i <= steps; i++) {
+                    const t = i / steps;
+                    const x = x1 * (1 - t) + x2 * t;
+                    const y = y1 * (1 - t) + y2 * t;
+                    const { col, row } = toHexGrid(x, y);
+                    hexes.add(`${col},${row}`);
+                }
+                return Array.from(hexes).map(str => {
+                    const [col, row] = str.split(",").map(Number);
+                    return { col, row };
+                });
+            }
+
+            function getOccupiedHexes() {
+                const occupied = new Set();
+                nodes.forEach(n => occupied.add(`${n.gridCol},${n.gridRow}`));
+                return occupied;
+            }
+
+            function step() {
+                const target = centroids.get(groupTo);
+                const from = fromHexGrid(currentHex.col, currentHex.row);
+                const path = getHexesAlongSegment(from.x, from.y, target.x, target.y);
+                storedPaths.push(path);
+
+                const occupied = getOccupiedHexes();
+
+                for (let i = 1; i < path.length; i++) {
+                    const h = path[i];
+                    const key = `${h.col},${h.row}`;
+                    const isOccupied = occupied.has(key);
+                    const isAlreadyInGroup = sGroup.some(n => n.gridCol === h.col && n.gridRow === h.row);
+
+                    if (!isAlreadyInGroup && !isOccupied) {
+                        const lastAxial = offsetToAxial(currentHex.col, currentHex.row);
+                        const nextAxial = offsetToAxial(h.col, h.row);
+                        const dq = nextAxial.q - lastAxial.q;
+                        const dr = nextAxial.r - lastAxial.r;
+
+                        sGroup.forEach(n => {
+                            const axial = offsetToAxial(n.gridCol, n.gridRow);
+                            const newQ = axial.q + dq;
+                            const newR = axial.r + dr;
+                            const { col, row } = axialToOffset(newQ, newR);
+                            n.gridCol = col;
+                            n.gridRow = row;
+                            const { x, y } = fromHexGrid(col, row);
+                            n.x = x;
+                            n.y = y;
+                        });
+
+                        currentHex = h;
+                        updateGraphics();
+                        setTimeout(step, 200);
+                        return;
+                    }
+                }
+
+                if (callback) callback();
+            }
+
+            step();
+        }
+
+        function updateGraphics() {
+            hexPaths.attr("d", d => {
+                const pts = d3.range(6).map(i => {
+                    const a = Math.PI / 3 * i - Math.PI / 2;
+                    return [d.x + radius * Math.cos(a), d.y + radius * Math.sin(a)];
+                });
+                return d3.line().curve(d3.curveLinearClosed)(pts);
+            });
+
+            centroids.clear();
+            grouped.forEach((group, canton) => {
+                const cx = d3.mean(group, d => d.x);
+                const cy = d3.mean(group, d => d.y);
+                centroids.set(canton, { x: cx, y: cy });
+            });
+
+            linkLines
+                .attr("x1", d => centroids.get(d.sourceCanton).x)
+                .attr("y1", d => centroids.get(d.sourceCanton).y)
+                .attr("x2", d => centroids.get(d.targetCanton).x)
+                .attr("y2", d => centroids.get(d.targetCanton).y);
+
+            svgEl.select(".centroids")
+                .selectAll("circle")
+                .data(Array.from(centroids.values()))
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        }
+
+        document.getElementById("startBtn").addEventListener("click", () => {
+            moveGroupTowards("25", "22", () => {
+                moveGroupTowards("10", "22", () => {
+                    moveGroupTowards("23", "22", () => {
+                        moveGroupTowards("2", "10");
+                    });
+                });
+            });
+        });
+
+        document.getElementById("showPathBtn").addEventListener("click", () => {
+            highlightG.selectAll("path").remove();
+            storedPaths.forEach(path => {
+                path.forEach(({ col, row }) => {
+                    const { x, y } = fromHexGrid(col, row);
+                    const pts = d3.range(6).map(i => {
+                        const a = Math.PI / 3 * i - Math.PI / 2;
+                        return [x + radius * Math.cos(a), y + radius * Math.sin(a)];
+                    });
+                    highlightG.append("path")
+                        .attr("d", d3.line().curve(d3.curveLinearClosed)(pts))
+                        .attr("fill", "yellow")
+                        .attr("fill-opacity", 0.4)
+                        .attr("stroke", "gold")
+                        .attr("stroke-width", 1);
+                });
+            });
+        });
+    </script>
+</body>
+
+</html>
